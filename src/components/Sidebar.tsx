@@ -15,7 +15,6 @@ import {
   Compass,
 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
-import { LanguageSelector } from './LanguageSelector';
 
 interface SidebarProps {
   currentView: string;
@@ -151,17 +150,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setCurrentView, o
         </div>
 
         <div>
-          {/* Language Switcher in Sidebar */}
-          <div className="mb-2">
-            <div className="flex items-center gap-2 px-6 mb-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#046A38]"></span>
-              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest font-mono">
-                {t('app.switchLanguage', 'Language')} / भाषा
-              </p>
-            </div>
-            <LanguageSelector variant="sidebar" />
-          </div>
-
           {/* Tactical Quick Overview Card */}
           <div className="mx-3 mb-2 p-3.5 rounded-2xl bg-gradient-to-b from-[#0a1326] to-[#070d1a] border border-[#1b2d4c] relative overflow-hidden shadow-lg">
             <div className="absolute top-0 right-0 w-24 h-24 bg-[#FF671F]/10 rounded-full blur-xl pointer-events-none -mr-8 -mt-8"></div>

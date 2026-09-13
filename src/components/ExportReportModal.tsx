@@ -768,27 +768,27 @@ export const ExportReportModal: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Allocated Resources Table with Progress Bars */}
+                  {/* Allocated Resources Table with Progress Bars (All 11 Tactical Asset Classes) */}
                   <div className="overflow-hidden rounded-md border border-slate-300">
-                    <table className="w-full text-left border-collapse text-[10.5px]">
+                    <table className="w-full text-left border-collapse text-[9.5px]">
                       <thead>
                         <tr className="bg-[#0F2942] text-white">
-                          <th className="py-1.5 px-2.5 font-bold w-48 border-r border-slate-700">Resource Asset Class</th>
-                          <th className="py-1.5 px-2.5 font-bold text-center w-48 border-r border-slate-700">
+                          <th className="py-1 px-2 font-bold w-48 border-r border-slate-700">Resource Asset Class</th>
+                          <th className="py-1 px-2 font-bold text-center w-44 border-r border-slate-700">
                             <div>Required</div>
-                            <div className="flex justify-between text-[8.5px] font-normal text-slate-300 px-1 mt-0.5 font-mono">
+                            <div className="flex justify-between text-[8px] font-normal text-slate-300 px-1 font-mono">
                               <span>0</span>
                               <span>Baseline</span>
                             </div>
                           </th>
-                          <th className="py-1.5 px-2.5 font-bold text-center w-52 border-r border-slate-700">
+                          <th className="py-1 px-2 font-bold text-center w-48 border-r border-slate-700">
                             <div>Dispatched</div>
-                            <div className="flex justify-between text-[8.5px] font-normal text-slate-300 px-1 mt-0.5 font-mono">
+                            <div className="flex justify-between text-[8px] font-normal text-slate-300 px-1 font-mono">
                               <span>Mobilized</span>
                               <span>Target</span>
                             </div>
                           </th>
-                          <th className="py-1.5 px-2.5 font-bold text-right w-36">
+                          <th className="py-1 px-2 font-bold text-right w-32">
                             {reportData.stateFilter === 'all' ? 'National Reserves' : 'State Remaining'}
                           </th>
                         </tr>
@@ -797,15 +797,15 @@ export const ExportReportModal: React.FC = () => {
                         {reportData.allocatedResources.map((item, idx) => (
                           <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}>
                             {/* Resource Type */}
-                            <td className="py-1.5 px-2.5 font-bold text-slate-900 border-r border-slate-200">
+                            <td className="py-0.5 px-2 font-bold text-slate-900 border-r border-slate-200 truncate max-w-[200px]">
                               {item.resourceType}
                             </td>
 
                             {/* Required Column with Filled Blue Bar */}
-                            <td className="py-1.5 px-2.5 border-r border-slate-200 align-middle">
-                              <div className="relative w-full h-4 bg-slate-200 rounded overflow-hidden flex items-center">
+                            <td className="py-0.5 px-2 border-r border-slate-200 align-middle">
+                              <div className="relative w-full h-3.5 bg-slate-200 rounded overflow-hidden flex items-center">
                                 <div
-                                  className="h-full bg-[#3B82F6] rounded transition-all flex items-center justify-end pr-1.5 text-white font-bold text-[9px]"
+                                  className="h-full bg-[#3B82F6] rounded transition-all flex items-center justify-end pr-1 text-white font-bold text-[8.5px]"
                                   style={{ width: `${Math.max(20, item.requiredBarPercent)}%` }}
                                 >
                                   {item.required.toLocaleString()}
@@ -814,17 +814,17 @@ export const ExportReportModal: React.FC = () => {
                             </td>
 
                             {/* Dispatched Column with Filled Cyan Bar */}
-                            <td className="py-1.5 px-2.5 border-r border-slate-200 align-middle">
-                              <div className="relative w-full h-4 bg-slate-200 rounded overflow-hidden flex items-center">
+                            <td className="py-0.5 px-2 border-r border-slate-200 align-middle">
+                              <div className="relative w-full h-3.5 bg-slate-200 rounded overflow-hidden flex items-center">
                                 {item.dispatched > 0 ? (
                                   <div
-                                    className="h-full bg-[#0284c7] rounded transition-all flex items-center justify-end pr-1.5 text-white font-bold text-[9px]"
+                                    className="h-full bg-[#0284c7] rounded transition-all flex items-center justify-end pr-1 text-white font-bold text-[8.5px]"
                                     style={{ width: `${Math.max(15, item.dispatchedBarPercent)}%` }}
                                   >
                                     {item.dispatched.toLocaleString()}
                                   </div>
                                 ) : (
-                                  <div className="w-full text-center text-slate-500 font-mono font-bold text-[9px]">
+                                  <div className="w-full text-center text-slate-500 font-mono font-bold text-[8.5px]">
                                     0
                                   </div>
                                 )}
@@ -832,7 +832,7 @@ export const ExportReportModal: React.FC = () => {
                             </td>
 
                             {/* Remaining */}
-                            <td className="py-1.5 px-2.5 text-right font-mono font-bold text-slate-800">
+                            <td className="py-0.5 px-2 text-right font-mono font-bold text-slate-800 text-[9px]">
                               {item.remainingNationally.toLocaleString()}
                             </td>
                           </tr>
@@ -843,10 +843,10 @@ export const ExportReportModal: React.FC = () => {
                 </div>
 
                 {/* SECTION 4: LIVE TACTICAL ROAD SUPPLY MISSIONS (AUTHENTIC HIGHWAY PATHING) */}
-                <div className="flex flex-col gap-1.5 mt-0.5">
+                <div className="flex flex-col gap-1 mt-0.5">
                   <div className="w-full py-1 px-2.5 rounded bg-[#DCE8F5] border-l-4 border-[#0F2942] flex items-center justify-between">
                     <h3 className="text-[11px] font-black text-[#0F2942] tracking-wider uppercase">
-                      SECTION 4: ACTIVE ROAD SUPPLY MISSIONS (MAP ROAD NETWORK FOLLOWING)
+                      SECTION 4: ACTIVE ROAD SUPPLY MISSIONS (CROOKED HIGHWAY ROUTING)
                     </h3>
                     <span className="text-[9.5px] font-bold text-[#0F2942]">
                       {reportData.dispatchMissions.length} Missions in Selected Scope
@@ -855,53 +855,64 @@ export const ExportReportModal: React.FC = () => {
 
                   {/* Active Convoys Table */}
                   <div className="overflow-hidden rounded-md border border-slate-300">
-                    <table className="w-full text-left border-collapse text-[10px]">
+                    <table className="w-full text-left border-collapse text-[9.5px]">
                       <thead>
                         <tr className="bg-[#0F2942] text-white">
-                          <th className="py-1 px-2.5 font-bold w-20 border-r border-slate-700">Mission</th>
-                          <th className="py-1 px-2.5 font-bold border-r border-slate-700">Origin Depot</th>
-                          <th className="py-1 px-2.5 font-bold border-r border-slate-700">Target District</th>
-                          <th className="py-1 px-2.5 font-bold border-r border-slate-700">Highway Corridors</th>
-                          <th className="py-1 px-2.5 font-bold text-center w-24 border-r border-slate-700">Road Dist.</th>
-                          <th className="py-1 px-2.5 font-bold text-center w-20 border-r border-slate-700">ETA</th>
-                          <th className="py-1 px-2.5 font-bold text-right w-24">Status</th>
+                          <th className="py-1 px-2 font-bold w-16 border-r border-slate-700">Mission</th>
+                          <th className="py-1 px-2 font-bold border-r border-slate-700">Origin Depot</th>
+                          <th className="py-1 px-2 font-bold border-r border-slate-700">Target District</th>
+                          <th className="py-1 px-2 font-bold border-r border-slate-700">Payload / Units</th>
+                          <th className="py-1 px-2 font-bold border-r border-slate-700">Highway Corridors</th>
+                          <th className="py-1 px-2 font-bold text-center w-20 border-r border-slate-700">Road Dist.</th>
+                          <th className="py-1 px-2 font-bold text-center w-14 border-r border-slate-700">ETA</th>
+                          <th className="py-1 px-2 font-bold text-right w-20">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
                         {reportData.dispatchMissions.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="py-3 px-3 text-center text-slate-500 italic">
+                            <td colSpan={8} className="py-2.5 px-3 text-center text-slate-500 italic">
                               No active dispatch convoys currently en route for {reportData.stateName}. Use the "New Dispatch" tool to deploy convoys.
                             </td>
                           </tr>
                         ) : (
-                          reportData.dispatchMissions.slice(0, 6).map((mission, idx) => (
-                            <tr key={mission.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}>
-                              <td className="py-1 px-2.5 font-mono font-bold text-blue-700 border-r border-slate-200">
-                                {mission.id}
-                              </td>
-                              <td className="py-1 px-2.5 font-medium text-slate-800 border-r border-slate-200 truncate max-w-[130px]">
-                                {mission.originDepot}
-                              </td>
-                              <td className="py-1 px-2.5 font-bold text-slate-900 border-r border-slate-200">
-                                {mission.targetDistrict}
-                              </td>
-                              <td className="py-1 px-2.5 font-mono text-[9.5px] text-slate-600 border-r border-slate-200 truncate max-w-[140px]">
-                                {mission.highwaysTraversed?.slice(0, 2).join(', ') || 'NH-16/SH Arterial'}
-                              </td>
-                              <td className="py-1 px-2.5 text-center font-mono text-slate-700 border-r border-slate-200">
-                                {mission.roadDistanceKm ? `${Math.round(mission.roadDistanceKm)} km` : '185 km'}
-                              </td>
-                              <td className="py-1 px-2.5 text-center font-mono font-bold text-amber-700 border-r border-slate-200">
-                                {mission.etaMinutes}m
-                              </td>
-                              <td className="py-1 px-2.5 text-right">
-                                <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-blue-100 text-blue-800">
-                                  {mission.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))
+                          reportData.dispatchMissions.slice(0, 5).map((mission, idx) => {
+                            const payloadSummary =
+                              mission.items && mission.items.length > 0
+                                ? mission.items.map((it) => `${it.quantity}x ${it.shortName || it.name}`).join(', ')
+                                : `${mission.quantity || 1}x ${mission.unitLabel || mission.resourceType || 'Tactical Unit'}`;
+
+                            return (
+                              <tr key={mission.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}>
+                                <td className="py-0.5 px-2 font-mono font-bold text-blue-700 border-r border-slate-200">
+                                  {mission.id}
+                                </td>
+                                <td className="py-0.5 px-2 font-medium text-slate-800 border-r border-slate-200 truncate max-w-[110px]">
+                                  {mission.originDepot}
+                                </td>
+                                <td className="py-0.5 px-2 font-bold text-slate-900 border-r border-slate-200 truncate max-w-[110px]">
+                                  {mission.targetDistrict}
+                                </td>
+                                <td className="py-0.5 px-2 text-[9px] text-slate-700 border-r border-slate-200 font-semibold truncate max-w-[140px]">
+                                  {payloadSummary}
+                                </td>
+                                <td className="py-0.5 px-2 font-mono text-[9px] text-slate-600 border-r border-slate-200 truncate max-w-[120px]">
+                                  {mission.highwaysTraversed?.slice(0, 2).join(', ') || 'NH-16/SH Arterial'}
+                                </td>
+                                <td className="py-0.5 px-2 text-center font-mono text-slate-700 border-r border-slate-200">
+                                  {mission.roadDistanceKm ? `${Math.round(mission.roadDistanceKm)} km` : '185 km'}
+                                </td>
+                                <td className="py-0.5 px-2 text-center font-mono font-bold text-amber-700 border-r border-slate-200">
+                                  {mission.etaMinutes}m
+                                </td>
+                                <td className="py-0.5 px-2 text-right">
+                                  <span className="inline-block px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase bg-blue-100 text-blue-800">
+                                    {mission.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>

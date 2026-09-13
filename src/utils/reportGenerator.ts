@@ -200,8 +200,8 @@ export function generateSimulationReport(
           d.state.toLowerCase().includes(selectedStateFilter.toLowerCase())
       );
 
-  // Fallbacks if data is still loading or specific state requested
-  if (targetDistricts.length === 0) {
+  // Fallbacks ONLY if geospatial data is completely empty (initial cold start before map geojson load)
+  if (targetDistricts.length === 0 && (!allDistricts || allDistricts.length === 0)) {
     if (selectedStateFilter.toLowerCase().includes('odisha') || activeParams.type === 'cyclone') {
       targetDistricts = ODISHA_PRESET_DISTRICTS.map((d) => ({
         district: d.district,
@@ -221,24 +221,31 @@ export function generateSimulationReport(
     }
   }
 
-  // Sort ALL target districts by vulnerability score descending (NO SLICING!)
-  targetDistricts.sort((a, b) => b.score - a.score);
-
-  const rankedDistricts: ReportAreaRanking[] = targetDistricts.map((d, index) => {
-    const normalizedScore = Number((d.score > 10 ? d.score : d.score * 10).toFixed(1));
+  // 3. Prepare, normalize, and sort ALL target districts strictly by vulnerability score descending (High to Low)
+  const mappedDistricts = targetDistricts.map((d) => {
+    const rawScore = typeof d.score === 'number' ? d.score : 0;
+    const finalScore = Number(Math.max(0, Math.min(100, rawScore)).toFixed(1));
     const priorityLevel: 'Critical' | 'High' | 'Moderate' | 'Low' =
-      normalizedScore >= 78 ? 'Critical' : normalizedScore >= 65 ? 'High' : normalizedScore >= 45 ? 'Moderate' : 'Low';
-    const impactRadiusKm = Number(Math.max(10, Math.min(75, d.distKm)).toFixed(1));
+      finalScore >= 80 ? 'Critical' : finalScore >= 65 ? 'High' : finalScore >= 45 ? 'Moderate' : 'Low';
+    const impactRadiusKm = Number(Math.max(10, Math.min(75, d.distKm || 30)).toFixed(1));
 
     return {
-      rank: index + 1,
       district: d.district,
       state: d.state,
-      vulnerabilityScore: normalizedScore,
+      vulnerabilityScore: finalScore,
       priorityLevel,
       impactRadiusKm,
     };
   });
+
+  // Strict descending sort by vulnerabilityScore (from highest 100.0 down to lowest 0.0)
+  mappedDistricts.sort((a, b) => b.vulnerabilityScore - a.vulnerabilityScore);
+
+  // Assign 1-based sequential rank
+  const rankedDistricts: ReportAreaRanking[] = mappedDistricts.map((d, index) => ({
+    rank: index + 1,
+    ...d,
+  }));
 
   const totalAffectedPopulation = targetDistricts.reduce((acc, d) => acc + d.population, 0) || 4537000;
 
@@ -292,7 +299,7 @@ export function generateSimulationReport(
           rankedDistricts.some((rd) => rd.district.toLowerCase() === d.targetDistrict.toLowerCase())
       );
 
-  // 9. Allocated Resources Summary (State-specific or National)
+  // 9. Allocated Resources Summary (All 11 Dispatchable Tactical Resources)
   const stateProfile = !isAllStates
     ? statesData.find(
         (s) =>
@@ -304,55 +311,119 @@ export function generateSimulationReport(
   let allocatedResources: AllocatedResourceItem[] = [];
 
   if (stateProfile) {
-    // Exact State-Level Resources
+    // Exact State-Level Resources for all 11 dispatchable asset types
     const res = stateProfile.resources;
     const popRatio = Math.max(0.2, totalAffectedPopulation / (stateProfile.population || 100000000));
 
-    // Water Tankers: count ONLY user dispatches
+    // 1. ALS Ambulances
+    const ambTotal = Math.max(120, Math.round((stateProfile.population || 50000000) / 300000));
+    const ambReq = Math.min(ambTotal, Math.max(15, Math.round(ambTotal * popRatio * 1.5)));
+    const ambDisp = countDispatchedUnits(filteredDispatches, ['ambulance', 'als', 'trauma', 'icu', 'medical']);
+    const ambRem = Math.max(0, ambTotal - ambDisp);
+
+    // 2. Fire Engines & Rescue Tenders
+    const feTotal = Math.max(80, Math.round((stateProfile.population || 50000000) / 450000));
+    const feReq = Math.min(feTotal, Math.max(8, Math.round(feTotal * popRatio * 1.3)));
+    const feDisp = countDispatchedUnits(filteredDispatches, ['fireengine', 'fire', 'tender', 'hazmat']);
+    const feRem = Math.max(0, feTotal - feDisp);
+
+    // 3. Police Quick Response Patrol
+    const polTotal = Math.max(150, Math.round((stateProfile.population || 50000000) / 250000));
+    const polReq = Math.min(polTotal, Math.max(12, Math.round(polTotal * popRatio * 1.4)));
+    const polDisp = countDispatchedUnits(filteredDispatches, ['policeunit', 'police', 'pcr', 'patrol', 'cruiser']);
+    const polRem = Math.max(0, polTotal - polDisp);
+
+    // 4. Military Rescue Helicopters (IAF / Army)
+    const heliTotal = Math.max(10, Math.round(stateProfile.sdrfBattalions * 3));
+    const heliReq = Math.min(heliTotal, Math.max(2, Math.round(heliTotal * popRatio * 1.2)));
+    const heliDisp = countDispatchedUnits(filteredDispatches, ['militaryhelicopter', 'helicopter', 'iaf', 'airlift', 'mi-17', 'dhruv']);
+    const heliRem = Math.max(0, heliTotal - heliDisp);
+
+    // 5. Motorized Rescue Boats & Gemini Craft
+    const boatTotal = res.floatingClinics?.total || 120;
+    const boatReq = Math.min(boatTotal, Math.max(10, Math.round((boatTotal || 120) * popRatio * 1.6)));
+    const boatDisp = countDispatchedUnits(filteredDispatches, ['motorboat', 'boat', 'gemini', 'floatingclinic']);
+    const boatRem = Math.max(0, (res.floatingClinics?.inReserve || boatTotal) - boatDisp);
+
+    // 6. Clean Drinking Water Tankers
     const wtTotal = res.waterTankers.total;
     const wtReq = Math.min(wtTotal, Math.max(25, Math.round(wtTotal * popRatio * 1.25)));
     const wtDisp = countDispatchedUnits(filteredDispatches, ['watertanker', 'tanker', 'bowser', 'water']);
     const wtRem = Math.max(0, res.waterTankers.inReserve - wtDisp);
 
-    // Ration Packets
+    // 7. Dry Ration Emergency Food Kits
     const rpTotal = res.rationPackets.total;
     const rpReq = Math.min(rpTotal, Math.max(2500, Math.round(rpTotal * popRatio * 1.4)));
     const rpDisp = countDispatchedUnits(filteredDispatches, ['rationpacket', 'ration', 'food']);
     const rpRem = Math.max(0, res.rationPackets.inReserve - rpDisp);
 
-    // Floating Clinics / Boats
-    const fcTotal = res.floatingClinics.total;
-    const fcReq = Math.min(fcTotal, Math.max(5, Math.round((fcTotal || 25) * popRatio * 1.5)));
-    const fcDisp = countDispatchedUnits(filteredDispatches, ['floatingclinic', 'motorboat', 'boat', 'gemini']);
-    const fcRem = Math.max(0, res.floatingClinics.inReserve - fcDisp);
+    // 8. High-Discharge Dewatering Pumps
+    const wpTotal = res.waterMotorPumps.total;
+    const wpReq = Math.min(wpTotal, Math.max(20, Math.round(wpTotal * popRatio * 1.6)));
+    const wpDisp = countDispatchedUnits(filteredDispatches, ['watermotorpump', 'pump', 'dewatering', 'trash']);
+    const wpRem = Math.max(0, res.waterMotorPumps.inReserve - wpDisp);
 
-    // Heavy Machinery
-    const dmTotal = res.debrisMachinery.total;
-    const dmReq = Math.min(dmTotal, Math.max(10, Math.round(dmTotal * popRatio * 1.1)));
-    const dmDisp = countDispatchedUnits(filteredDispatches, ['debrismachinery', 'machinery', 'excavator', 'jcb']);
-    const dmRem = Math.max(0, res.debrisMachinery.inReserve - dmDisp);
-
-    // Emergency Generators
+    // 9. Emergency Mobile DG Generators
     const egTotal = res.emergencyGenerators.total;
     const egReq = Math.min(egTotal, Math.max(15, Math.round(egTotal * popRatio * 1.3)));
     const egDisp = countDispatchedUnits(filteredDispatches, ['emergencygenerator', 'generator', 'dg']);
     const egRem = Math.max(0, res.emergencyGenerators.inReserve - egDisp);
 
-    // Weatherproof Shelter Tents
+    // 10. Weatherproof Shelter Tents & Tarpaulins
     const ttTotal = res.tarpTentKits.total;
     const ttReq = Math.min(ttTotal, Math.max(300, Math.round(ttTotal * popRatio * 1.4)));
     const ttDisp = countDispatchedUnits(filteredDispatches, ['tarptentkit', 'tent', 'tarp', 'shelter']);
     const ttRem = Math.max(0, res.tarpTentKits.inReserve - ttDisp);
 
-    // High Capacity Trash Pumps
-    const wpTotal = res.waterMotorPumps.total;
-    const wpReq = Math.min(wpTotal, Math.max(20, Math.round(wpTotal * popRatio * 1.6)));
-    const wpDisp = countDispatchedUnits(filteredDispatches, ['watermotorpump', 'pump', 'dewatering']);
-    const wpRem = Math.max(0, res.waterMotorPumps.inReserve - wpDisp);
+    // 11. Heavy Earthmoving Excavators & JCBs
+    const dmTotal = res.debrisMachinery.total;
+    const dmReq = Math.min(dmTotal, Math.max(10, Math.round(dmTotal * popRatio * 1.1)));
+    const dmDisp = countDispatchedUnits(filteredDispatches, ['debrismachinery', 'machinery', 'excavator', 'jcb']);
+    const dmRem = Math.max(0, res.debrisMachinery.inReserve - dmDisp);
 
     allocatedResources = [
       {
-        resourceType: 'Clean Drinking Water Tankers',
+        resourceType: 'Advanced Life Support (ALS) Ambulances',
+        required: ambReq,
+        dispatched: ambDisp,
+        remainingNationally: ambRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((ambReq / ambTotal) * 100))),
+        dispatchedBarPercent: ambReq > 0 && ambDisp > 0 ? Math.min(100, Math.round((ambDisp / ambReq) * 100)) : 0,
+      },
+      {
+        resourceType: 'Fire Engines & Heavy Rescue Tenders',
+        required: feReq,
+        dispatched: feDisp,
+        remainingNationally: feRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((feReq / feTotal) * 100))),
+        dispatchedBarPercent: feReq > 0 && feDisp > 0 ? Math.min(100, Math.round((feDisp / feReq) * 100)) : 0,
+      },
+      {
+        resourceType: 'Police Quick Response & PCR Patrol',
+        required: polReq,
+        dispatched: polDisp,
+        remainingNationally: polRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((polReq / polTotal) * 100))),
+        dispatchedBarPercent: polReq > 0 && polDisp > 0 ? Math.min(100, Math.round((polDisp / polReq) * 100)) : 0,
+      },
+      {
+        resourceType: 'Military Rescue Helicopters (IAF / Army)',
+        required: heliReq,
+        dispatched: heliDisp,
+        remainingNationally: heliRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((heliReq / heliTotal) * 100))),
+        dispatchedBarPercent: heliReq > 0 && heliDisp > 0 ? Math.min(100, Math.round((heliDisp / heliReq) * 100)) : 0,
+      },
+      {
+        resourceType: 'Motorized Rescue Boats & Gemini Craft',
+        required: boatReq,
+        dispatched: boatDisp,
+        remainingNationally: boatRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((boatReq / boatTotal) * 100))),
+        dispatchedBarPercent: boatReq > 0 && boatDisp > 0 ? Math.min(100, Math.round((boatDisp / boatReq) * 100)) : 0,
+      },
+      {
+        resourceType: 'Potable Drinking Water Tankers',
         required: wtReq,
         dispatched: wtDisp,
         remainingNationally: wtRem,
@@ -360,7 +431,7 @@ export function generateSimulationReport(
         dispatchedBarPercent: wtReq > 0 && wtDisp > 0 ? Math.min(100, Math.round((wtDisp / wtReq) * 100)) : 0,
       },
       {
-        resourceType: 'Dry Ration Food Packets',
+        resourceType: 'Dry Ration Emergency Food Kits',
         required: rpReq,
         dispatched: rpDisp,
         remainingNationally: rpRem,
@@ -368,23 +439,15 @@ export function generateSimulationReport(
         dispatchedBarPercent: rpReq > 0 && rpDisp > 0 ? Math.min(100, Math.round((rpDisp / rpReq) * 100)) : 0,
       },
       {
-        resourceType: 'Floating Clinics & Rescue Boats',
-        required: fcReq,
-        dispatched: fcDisp,
-        remainingNationally: fcRem,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((fcReq / fcTotal) * 100))),
-        dispatchedBarPercent: fcReq > 0 && fcDisp > 0 ? Math.min(100, Math.round((fcDisp / fcReq) * 100)) : 0,
+        resourceType: 'High-Discharge Dewatering Pumps',
+        required: wpReq,
+        dispatched: wpDisp,
+        remainingNationally: wpRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((wpReq / wpTotal) * 100))),
+        dispatchedBarPercent: wpReq > 0 && wpDisp > 0 ? Math.min(100, Math.round((wpDisp / wpReq) * 100)) : 0,
       },
       {
-        resourceType: 'Heavy Debris Clearing Equipment',
-        required: dmReq,
-        dispatched: dmDisp,
-        remainingNationally: dmRem,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((dmReq / dmTotal) * 100))),
-        dispatchedBarPercent: dmReq > 0 && dmDisp > 0 ? Math.min(100, Math.round((dmDisp / dmReq) * 100)) : 0,
-      },
-      {
-        resourceType: 'Emergency Backup Generators',
+        resourceType: 'Emergency Mobile DG Generators',
         required: egReq,
         dispatched: egDisp,
         remainingNationally: egRem,
@@ -392,7 +455,7 @@ export function generateSimulationReport(
         dispatchedBarPercent: egReq > 0 && egDisp > 0 ? Math.min(100, Math.round((egDisp / egReq) * 100)) : 0,
       },
       {
-        resourceType: 'High-Strength Weatherproof Tents',
+        resourceType: 'Emergency Tents & Shelter Tarpaulins',
         required: ttReq,
         dispatched: ttDisp,
         remainingNationally: ttRem,
@@ -400,89 +463,172 @@ export function generateSimulationReport(
         dispatchedBarPercent: ttReq > 0 && ttDisp > 0 ? Math.min(100, Math.round((ttDisp / ttReq) * 100)) : 0,
       },
       {
-        resourceType: 'High-Capacity Dewatering Pumps',
-        required: wpReq,
-        dispatched: wpDisp,
-        remainingNationally: wpRem,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((wpReq / wpTotal) * 100))),
-        dispatchedBarPercent: wpReq > 0 && wpDisp > 0 ? Math.min(100, Math.round((wpDisp / wpReq) * 100)) : 0,
+        resourceType: 'Heavy Earthmoving Excavators & JCBs',
+        required: dmReq,
+        dispatched: dmDisp,
+        remainingNationally: dmRem,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((dmReq / dmTotal) * 100))),
+        dispatchedBarPercent: dmReq > 0 && dmDisp > 0 ? Math.min(100, Math.round((dmDisp / dmReq) * 100)) : 0,
       },
     ];
   } else {
-    // Dynamic Live National Resource Grid
+    // Dynamic Live National Resource Grid (All 11 Dispatchable Tactical Resources)
     const natSummary = getNationalResourceSummary(statesData);
 
-    // Strictly count user-dispatched assets
-    const medicalDispatched = countDispatchedUnits(filteredDispatches, ['ambulance', 'als', 'medical', 'trauma']);
-    const waterBowsersDispatched = countDispatchedUnits(filteredDispatches, ['watertanker', 'tanker', 'bowser', 'water']);
-    const boatsDispatched = countDispatchedUnits(filteredDispatches, ['motorboat', 'boat', 'gemini', 'floatingclinic']);
-    const sheltersDispatched = countDispatchedUnits(filteredDispatches, ['tarptentkit', 'tent', 'tarp', 'shelter']);
-    const ndrfDispatched = countDispatchedUnits(filteredDispatches, ['fireengine', 'policeunit', 'militaryhelicopter', 'fire', 'police', 'helicopter', 'ndrf', 'sdrf']);
+    // 1. Ambulances
+    const ambDispatched = countDispatchedUnits(filteredDispatches, ['ambulance', 'als', 'trauma', 'icu', 'medical']);
+    const ambTotal = 15000;
+    const ambRemaining = Math.max(0, ambTotal - ambDispatched);
+    const ambRequired = Math.max(120, Math.round(totalAffectedPopulation / 35000));
 
-    // Dynamic Live National Reserves: decrease in real time as user dispatches
-    const medicalTotal = 50000;
-    const medicalRemaining = Math.max(0, medicalTotal - medicalDispatched);
+    // 2. Fire Engines & Rescue Tenders
+    const feDispatched = countDispatchedUnits(filteredDispatches, ['fireengine', 'fire', 'tender', 'hazmat']);
+    const feTotal = 8500;
+    const feRemaining = Math.max(0, feTotal - feDispatched);
+    const feRequired = Math.max(60, Math.round(totalAffectedPopulation / 60000));
 
-    const waterBowsersTotal = natSummary.summary.waterTankers.total || 25000;
-    const waterBowsersRemaining = Math.max(0, (natSummary.summary.waterTankers.inReserve || 12000) - waterBowsersDispatched);
+    // 3. Police Patrol
+    const polDispatched = countDispatchedUnits(filteredDispatches, ['policeunit', 'police', 'pcr', 'patrol', 'cruiser']);
+    const polTotal = 18000;
+    const polRemaining = Math.max(0, polTotal - polDispatched);
+    const polRequired = Math.max(90, Math.round(totalAffectedPopulation / 45000));
 
-    const boatsTotal = 1500;
-    const boatsRemaining = Math.max(0, boatsTotal - boatsDispatched);
+    // 4. Military Helicopters
+    const heliDispatched = countDispatchedUnits(filteredDispatches, ['militaryhelicopter', 'helicopter', 'iaf', 'airlift', 'mi-17', 'dhruv']);
+    const heliTotal = 450;
+    const heliRemaining = Math.max(0, heliTotal - heliDispatched);
+    const heliRequired = Math.max(18, Math.round(totalAffectedPopulation / 220000));
 
-    const sheltersTotal = natSummary.summary.tarpTentKits.total || 150000;
-    const sheltersRemaining = Math.max(0, (natSummary.summary.tarpTentKits.inReserve || 75000) - sheltersDispatched);
+    // 5. Motorized Rescue Boats
+    const boatDispatched = countDispatchedUnits(filteredDispatches, ['motorboat', 'boat', 'gemini', 'floatingclinic']);
+    const boatTotal = 4200;
+    const boatRemaining = Math.max(0, boatTotal - boatDispatched);
+    const boatRequired = activeParams.type === 'heatwave' ? 40 : Math.max(80, Math.round(totalAffectedPopulation / 45000));
 
-    const ndrfTotal = natSummary.totalSDRFBattalions || 150;
-    const ndrfRemaining = Math.max(0, ndrfTotal - ndrfDispatched);
+    // 6. Water Tankers
+    const wtDispatched = countDispatchedUnits(filteredDispatches, ['watertanker', 'tanker', 'bowser', 'water']);
+    const wtTotal = natSummary.summary.waterTankers.total || 25000;
+    const wtRemaining = Math.max(0, (natSummary.summary.waterTankers.inReserve || 12000) - wtDispatched);
+    const wtRequired = Math.max(250, Math.round(totalAffectedPopulation / 18000));
 
-    // Requirement estimation based on simulated disaster
-    const baseMedicalRequired = Math.round((totalAffectedPopulation / 907) / 100) * 100;
-    const medicalRequired = Math.max(3500, baseMedicalRequired || 5000);
-    const boatsRequired = activeParams.type === 'heatwave' ? 30 : 220;
-    const sheltersRequired = Math.max(800, Math.round(totalAffectedPopulation / 4000));
-    const ndrfRequired = 28;
-    const waterBowsersRequired = Math.max(250, Math.round(totalAffectedPopulation / 18000));
+    // 7. Food Kits
+    const rpDispatched = countDispatchedUnits(filteredDispatches, ['rationpacket', 'ration', 'food']);
+    const rpTotal = natSummary.summary.rationPackets.total || 250000;
+    const rpRemaining = Math.max(0, (natSummary.summary.rationPackets.inReserve || 120000) - rpDispatched);
+    const rpRequired = Math.max(5000, Math.round(totalAffectedPopulation / 200));
+
+    // 8. Dewatering Pumps
+    const wpDispatched = countDispatchedUnits(filteredDispatches, ['watermotorpump', 'pump', 'dewatering', 'trash']);
+    const wpTotal = natSummary.summary.waterMotorPumps.total || 18000;
+    const wpRemaining = Math.max(0, (natSummary.summary.waterMotorPumps.inReserve || 9000) - wpDispatched);
+    const wpRequired = Math.max(120, Math.round(totalAffectedPopulation / 32000));
+
+    // 9. DG Generators
+    const egDispatched = countDispatchedUnits(filteredDispatches, ['emergencygenerator', 'generator', 'dg']);
+    const egTotal = natSummary.summary.emergencyGenerators.total || 12000;
+    const egRemaining = Math.max(0, (natSummary.summary.emergencyGenerators.inReserve || 6000) - egDispatched);
+    const egRequired = Math.max(80, Math.round(totalAffectedPopulation / 48000));
+
+    // 10. Shelter Tents
+    const ttDispatched = countDispatchedUnits(filteredDispatches, ['tarptentkit', 'tent', 'tarp', 'shelter']);
+    const ttTotal = natSummary.summary.tarpTentKits.total || 150000;
+    const ttRemaining = Math.max(0, (natSummary.summary.tarpTentKits.inReserve || 75000) - ttDispatched);
+    const ttRequired = Math.max(800, Math.round(totalAffectedPopulation / 3500));
+
+    // 11. Heavy Machinery
+    const dmDispatched = countDispatchedUnits(filteredDispatches, ['debrismachinery', 'machinery', 'excavator', 'jcb']);
+    const dmTotal = natSummary.summary.debrisMachinery.total || 8000;
+    const dmRemaining = Math.max(0, (natSummary.summary.debrisMachinery.inReserve || 4000) - dmDispatched);
+    const dmRequired = Math.max(50, Math.round(totalAffectedPopulation / 70000));
 
     allocatedResources = [
       {
-        resourceType: 'Advanced Life Support & Trauma Kits',
-        required: medicalRequired,
-        dispatched: medicalDispatched,
-        remainingNationally: medicalRemaining,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((medicalRequired / 6000) * 100))),
-        dispatchedBarPercent: medicalRequired > 0 && medicalDispatched > 0 ? Math.min(100, Math.round((medicalDispatched / medicalRequired) * 100)) : 0,
+        resourceType: 'Advanced Life Support (ALS) Ambulances',
+        required: ambRequired,
+        dispatched: ambDispatched,
+        remainingNationally: ambRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((ambRequired / 600) * 100))),
+        dispatchedBarPercent: ambRequired > 0 && ambDispatched > 0 ? Math.min(100, Math.round((ambDispatched / ambRequired) * 100)) : 0,
       },
       {
-        resourceType: 'Emergency Potable Water Bowsers',
-        required: waterBowsersRequired,
-        dispatched: waterBowsersDispatched,
-        remainingNationally: waterBowsersRemaining,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((waterBowsersRequired / 500) * 100))),
-        dispatchedBarPercent: waterBowsersRequired > 0 && waterBowsersDispatched > 0 ? Math.min(100, Math.round((waterBowsersDispatched / waterBowsersRequired) * 100)) : 0,
+        resourceType: 'Fire Engines & Heavy Rescue Tenders',
+        required: feRequired,
+        dispatched: feDispatched,
+        remainingNationally: feRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((feRequired / 400) * 100))),
+        dispatchedBarPercent: feRequired > 0 && feDispatched > 0 ? Math.min(100, Math.round((feDispatched / feRequired) * 100)) : 0,
       },
       {
-        resourceType: 'Inflatable Gemini Rescue Boats',
-        required: boatsRequired,
-        dispatched: boatsDispatched,
-        remainingNationally: boatsRemaining,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((boatsRequired / 300) * 100))),
-        dispatchedBarPercent: boatsRequired > 0 && boatsDispatched > 0 ? Math.min(100, Math.round((boatsDispatched / boatsRequired) * 100)) : 0,
+        resourceType: 'Police Quick Response & PCR Patrol',
+        required: polRequired,
+        dispatched: polDispatched,
+        remainingNationally: polRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((polRequired / 500) * 100))),
+        dispatchedBarPercent: polRequired > 0 && polDispatched > 0 ? Math.min(100, Math.round((polDispatched / polRequired) * 100)) : 0,
       },
       {
-        resourceType: 'Weatherproof Relief Shelters',
-        required: sheltersRequired,
-        dispatched: sheltersDispatched,
-        remainingNationally: sheltersRemaining,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((sheltersRequired / 1500) * 100))),
-        dispatchedBarPercent: sheltersRequired > 0 && sheltersDispatched > 0 ? Math.min(100, Math.round((sheltersDispatched / sheltersRequired) * 100)) : 0,
+        resourceType: 'Military Rescue Helicopters (IAF / Army)',
+        required: heliRequired,
+        dispatched: heliDispatched,
+        remainingNationally: heliRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((heliRequired / 60) * 100))),
+        dispatchedBarPercent: heliRequired > 0 && heliDispatched > 0 ? Math.min(100, Math.round((heliDispatched / heliRequired) * 100)) : 0,
       },
       {
-        resourceType: 'NDRF & SDRF Tactical Battalions',
-        required: ndrfRequired,
-        dispatched: ndrfDispatched,
-        remainingNationally: ndrfRemaining,
-        requiredBarPercent: Math.min(100, Math.max(15, Math.round((ndrfRequired / 35) * 100))),
-        dispatchedBarPercent: ndrfRequired > 0 && ndrfDispatched > 0 ? Math.min(100, Math.round((ndrfDispatched / ndrfRequired) * 100)) : 0,
+        resourceType: 'Motorized Rescue Boats & Gemini Craft',
+        required: boatRequired,
+        dispatched: boatDispatched,
+        remainingNationally: boatRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((boatRequired / 300) * 100))),
+        dispatchedBarPercent: boatRequired > 0 && boatDispatched > 0 ? Math.min(100, Math.round((boatDispatched / boatRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'Potable Drinking Water Tankers',
+        required: wtRequired,
+        dispatched: wtDispatched,
+        remainingNationally: wtRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((wtRequired / 500) * 100))),
+        dispatchedBarPercent: wtRequired > 0 && wtDispatched > 0 ? Math.min(100, Math.round((wtDispatched / wtRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'Dry Ration Emergency Food Kits',
+        required: rpRequired,
+        dispatched: rpDispatched,
+        remainingNationally: rpRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((rpRequired / 25000) * 100))),
+        dispatchedBarPercent: rpRequired > 0 && rpDispatched > 0 ? Math.min(100, Math.round((rpDispatched / rpRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'High-Discharge Dewatering Pumps',
+        required: wpRequired,
+        dispatched: wpDispatched,
+        remainingNationally: wpRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((wpRequired / 400) * 100))),
+        dispatchedBarPercent: wpRequired > 0 && wpDispatched > 0 ? Math.min(100, Math.round((wpDispatched / wpRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'Emergency Mobile DG Generators',
+        required: egRequired,
+        dispatched: egDispatched,
+        remainingNationally: egRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((egRequired / 300) * 100))),
+        dispatchedBarPercent: egRequired > 0 && egDispatched > 0 ? Math.min(100, Math.round((egDispatched / egRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'Emergency Tents & Shelter Tarpaulins',
+        required: ttRequired,
+        dispatched: ttDispatched,
+        remainingNationally: ttRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((ttRequired / 1500) * 100))),
+        dispatchedBarPercent: ttRequired > 0 && ttDispatched > 0 ? Math.min(100, Math.round((ttDispatched / ttRequired) * 100)) : 0,
+      },
+      {
+        resourceType: 'Heavy Earthmoving Excavators & JCBs',
+        required: dmRequired,
+        dispatched: dmDispatched,
+        remainingNationally: dmRemaining,
+        requiredBarPercent: Math.min(100, Math.max(15, Math.round((dmRequired / 200) * 100))),
+        dispatchedBarPercent: dmRequired > 0 && dmDispatched > 0 ? Math.min(100, Math.round((dmDispatched / dmRequired) * 100)) : 0,
       },
     ];
   }

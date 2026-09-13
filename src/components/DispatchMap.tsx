@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { GeoJsonLayer, ScatterplotLayer, LineLayer, PathLayer } from '@deck.gl/layers';
-import { Map as MapGL, Marker } from 'react-map-gl/maplibre';
+import { Map as MapGL } from 'react-map-gl/maplibre';
 import maplibregl from 'maplibre-gl';
-import { FlyToInterpolator } from '@deck.gl/core';
+import { FlyToInterpolator, WebMercatorViewport } from '@deck.gl/core';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   MapPin,
@@ -50,6 +50,7 @@ import {
   CheckCircle,
   Eye,
   FileText,
+  Trash2,
 } from 'lucide-react';
 
 import {
@@ -172,6 +173,75 @@ export const DispatchMap: React.FC = () => {
     pitch: is3DMode ? 28 : 0,
     bearing: 0,
   });
+
+  // Map Container Reference & Sizing for Pixel Projection Overlay (Solid HUD & Vehicles)
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const [containerDimensions, setContainerDimensions] = useState<{ width: number; height: number }>({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1200,
+    height: typeof window !== 'undefined' ? window.innerHeight : 800,
+  });
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const updateSize = () => {
+      if (mapContainerRef.current) {
+        const { clientWidth, clientHeight } = mapContainerRef.current;
+        if (clientWidth > 0 && clientHeight > 0) {
+          setContainerDimensions({ width: clientWidth, height: clientHeight });
+        }
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(() => updateSize());
+    ro.observe(mapContainerRef.current);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, []);
+
+  // WebMercatorViewport instance matching exact DeckGL camera projection
+  const viewport = useMemo(() => {
+    try {
+      if (!containerDimensions.width || !containerDimensions.height) return null;
+      return new WebMercatorViewport({
+        width: containerDimensions.width,
+        height: containerDimensions.height,
+        longitude: viewState.longitude,
+        latitude: viewState.latitude,
+        zoom: viewState.zoom,
+        pitch: viewState.pitch || 0,
+        bearing: viewState.bearing || 0,
+      });
+    } catch {
+      return null;
+    }
+  }, [containerDimensions, viewState]);
+
+  // Project geographic [lng, lat] to pixel coordinates [x, y] on top of DeckGL canvas
+  const projectLngLat = useCallback(
+    (coords?: [number, number] | number[] | null): [number, number] | null => {
+      if (!coords || !Array.isArray(coords) || coords.length < 2 || !viewport) return null;
+      try {
+        const [x, y] = viewport.project([coords[0], coords[1]]);
+        if (isNaN(x) || isNaN(y)) return null;
+        // Cull markers that are way outside viewport
+        if (
+          x < -300 ||
+          x > containerDimensions.width + 300 ||
+          y < -300 ||
+          y > containerDimensions.height + 300
+        ) {
+          return null;
+        }
+        return [x, y];
+      } catch {
+        return null;
+      }
+    },
+    [viewport, containerDimensions]
+  );
 
   // Selected District within State
   const [selectedDistrictProps, setSelectedDistrictProps] = useState<any | null>(null);
@@ -1210,33 +1280,35 @@ export const DispatchMap: React.FC = () => {
     // 3. Active Supply Lines & Convoys (Connecting Relief Warehouses to Affected Districts - Image 2 Navigation Style)
     const activeRouteData: any[] = [];
 
-    // Include all active dispatches for current state (or all states if matching)
+    // Include only active in-transit dispatches for current state (completed dispatches are cleared from the map path)
     if (layerToggles.convoys) {
-      stateDispatches.forEach((disp) => {
-        const pathCoords =
-          disp.roadPath && disp.roadPath.length >= 2
-            ? disp.roadPath
-            : [
-                Array.isArray(disp.originCoords) && disp.originCoords.length >= 2 ? disp.originCoords : [78.9629, 20.5937],
-                Array.isArray(disp.targetCoords) && disp.targetCoords.length >= 2 ? disp.targetCoords : [78.9629, 20.5937],
-              ];
+      stateDispatches
+        .filter((disp) => disp.status === 'In Transit' && (disp.progress || 0) < 100)
+        .forEach((disp) => {
+          const pathCoords =
+            disp.roadPath && disp.roadPath.length >= 2
+              ? disp.roadPath
+              : [
+                  Array.isArray(disp.originCoords) && disp.originCoords.length >= 2 ? disp.originCoords : [78.9629, 20.5937],
+                  Array.isArray(disp.targetCoords) && disp.targetCoords.length >= 2 ? disp.targetCoords : [78.9629, 20.5937],
+                ];
 
-        activeRouteData.push({
-          id: disp.id,
-          path: pathCoords,
-          priority: disp.priority,
-          targetDistrict: disp.targetDistrict,
-          originDepot: disp.originDepot,
-          roadDistanceKm: disp.roadDistanceKm || 60,
-          curvatureRatio: disp.curvatureRatio,
-          highwaysTraversed: disp.highwaysTraversed,
-          progress: disp.progress || 0,
-          etaMinutes: disp.etaMinutes || 35,
-          status: disp.status,
-          primaryUnitType: disp.primaryUnitType,
-          isPreview: false,
+          activeRouteData.push({
+            id: disp.id,
+            path: pathCoords,
+            priority: disp.priority,
+            targetDistrict: disp.targetDistrict,
+            originDepot: disp.originDepot,
+            roadDistanceKm: disp.roadDistanceKm || 60,
+            curvatureRatio: disp.curvatureRatio,
+            highwaysTraversed: disp.highwaysTraversed,
+            progress: disp.progress || 0,
+            etaMinutes: disp.etaMinutes || 35,
+            status: disp.status,
+            primaryUnitType: disp.primaryUnitType,
+            isPreview: false,
+          });
         });
-      });
 
       // Also include preview route when planning a dispatch or selecting warehouse + district
       if ((showNewDispatchModal || (selectedWarehouse && selectedDistrictProps)) && estimatedRouteInfo?.targetCoords && activeOriginWarehouse) {
@@ -1416,7 +1488,10 @@ export const DispatchMap: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-full bg-[#070a12] overflow-hidden rounded-2xl border border-[#151f32] select-none">
+    <div
+      ref={mapContainerRef}
+      className="relative w-full h-full bg-[#070a12] overflow-hidden rounded-2xl border border-[#151f32] select-none"
+    >
       {/* Loading Overlay */}
       {loading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070a12]/85 backdrop-blur-md">
@@ -1805,170 +1880,263 @@ export const DispatchMap: React.FC = () => {
         onClick={handleMapClick}
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'default')}
       >
-        <MapGL id="dispatch-map" reuseMaps mapLib={maplibregl} style={{width: "100%", height: "100%", position: "absolute"}}  
-          
+        <MapGL
+          id="dispatch-map"
+          reuseMaps
+          mapLib={maplibregl}
+          style={{ width: '100%', height: '100%', position: 'absolute' }}
           mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-          
           attributionControl={false}
-        >
-          {/* Realistic Dispatch Supply Routes from Warehouses to Destinations (Image 2 Navigation Style) */}
-          {dispatches.map((mission) => {
-            const p = mission.progress || 0;
-            const pathCoords =
-              mission.roadPath && mission.roadPath.length >= 2
-                ? mission.roadPath
-                : [mission.originCoords, mission.targetCoords];
+        />
+      </DeckGL>
 
-            const curvedState = getCurvedPositionAndHeading(
-              pathCoords,
-              p,
-              mission.roadDistanceKm || 60,
-              mission.highwaysTraversed || []
-            );
+      {/* 100% SOLID, HIGH-CONTRAST TACTICAL HTML OVERLAY ON TOP OF DECKGL (Z-INDEX 25) */}
+      {/* Prevents DeckGL vector boundary lines & district fills from overlapping or making units transparent */}
+      {viewport && (
+        <div className="absolute inset-0 pointer-events-none z-25 overflow-hidden">
+          {/* Active In-Transit Missions */}
+          {dispatches
+            .filter((mission) => mission.status === 'In Transit' && (mission.progress || 0) < 100)
+            .map((mission) => {
+              const p = mission.progress || 0;
+              const pathCoords =
+                mission.roadPath && mission.roadPath.length >= 2
+                  ? mission.roadPath
+                  : [mission.originCoords, mission.targetCoords];
 
-            const curLng = curvedState.coordinates[0];
-            const curLat = curvedState.coordinates[1];
-            const heading = curvedState.headingDegrees;
-            const isArrived = mission.status === 'Arrived & Active';
+              const curvedState = getCurvedPositionAndHeading(
+                pathCoords,
+                p,
+                mission.roadDistanceKm || 60,
+                mission.highwaysTraversed || []
+              );
 
-            return (
-              <React.Fragment key={mission.id}>
-                {/* 1. Origin Relief Warehouse Node Pin */}
-                {Array.isArray(mission.originCoords) && mission.originCoords.length >= 2 && (
-                  <Marker
-                    longitude={mission.originCoords[0]}
-                    latitude={mission.originCoords[1]}
-                    anchor="bottom"
-                  >
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#064e3b]/95 border border-emerald-400/60 shadow-lg text-[9px] font-bold text-emerald-200 pointer-events-auto backdrop-blur-md">
-                      <Building2 size={10} className="text-emerald-400 shrink-0" />
-                      <span className="truncate max-w-[95px]">{mission.originDepot || 'Relief Depot'}</span>
-                    </div>
-                  </Marker>
-                )}
+              const curLng = curvedState.coordinates[0];
+              const curLat = curvedState.coordinates[1];
+              const heading = curvedState.headingDegrees;
 
-                {/* 2. Destination District Target Pin */}
-                {Array.isArray(mission.targetCoords) && mission.targetCoords.length >= 2 && (
-                  <Marker
-                    longitude={mission.targetCoords[0]}
-                    latitude={mission.targetCoords[1]}
-                    anchor="bottom"
-                  >
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-950/95 border border-red-500/60 shadow-lg text-[9px] font-bold text-red-200 pointer-events-auto backdrop-blur-md animate-pulse">
-                      <MapPin size={10} className="text-red-400 shrink-0" />
-                      <span className="truncate max-w-[95px]">{mission.targetDistrict || 'Target'}</span>
-                    </div>
-                  </Marker>
-                )}
+              const originPx = projectLngLat(mission.originCoords);
+              const targetPx = projectLngLat(mission.targetCoords);
+              const unitPx = projectLngLat([curLng, curLat]);
 
-                {/* 3. Active Beacon Puck & Floating Navigation Route HUD Card (Matching Image 2!) */}
-                <Marker
-                  longitude={curLng}
-                  latitude={curLat}
-                  anchor="center"
-                >
-                  <div
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isArrived) {
-                        setSelectedArrivedMission(mission);
-                      } else {
-                        setIsLeftPanelOpen(true);
-                        setActiveLeftTab('dispatches');
-                      }
-                    }}
-                    className="cursor-pointer group relative flex flex-col items-center select-none"
-                  >
-                    {/* Floating Navigation HUD Tooltip Card (Matching Image 2!) */}
-                    <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-40 min-w-[210px] max-w-[260px] bg-[#07111e]/98 border border-[#1e3c60] p-2.5 rounded-2xl shadow-2xl backdrop-blur-xl flex flex-col gap-1 text-left select-none pointer-events-auto after:content-[''] after:absolute after:top-full after:left-1/2 after:-translate-x-1/2 after:border-6 after:border-transparent after:border-t-[#07111e]">
-                      {/* Top Row: Distance & ETA (like 64.06 mi • 2339 ft in Image 2) */}
-                      <div className="flex items-center justify-between text-[11px] font-black text-white">
-                        <span className="tracking-tight">{mission.roadDistanceKm || 60} km • {mission.etaMinutes || 35}m ETA</span>
-                        <span className={`text-[8.5px] font-bold px-1.5 py-0.2 rounded uppercase ${
-                          mission.priority === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                        }`}>
-                          {mission.priority}
-                        </span>
+              return (
+                <React.Fragment key={mission.id}>
+                  {/* 1. Origin Relief Warehouse Node Pin */}
+                  {originPx && (
+                    <div
+                      className="absolute pointer-events-auto select-none"
+                      style={{
+                        left: `${originPx[0]}px`,
+                        top: `${originPx[1]}px`,
+                        transform: 'translate(-50%, -100%)',
+                        zIndex: 26,
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#042417] border-2 border-emerald-400 shadow-[0_6px_20px_rgba(0,0,0,0.9)] text-[9.5px] font-black text-emerald-100 whitespace-nowrap mb-1">
+                        <Building2 size={11} className="text-emerald-300 shrink-0" />
+                        <span className="truncate max-w-[120px]">{mission.originDepot || 'Relief Depot'}</span>
                       </div>
+                    </div>
+                  )}
 
-                      {/* Middle Row: Passability (like 100% paved in Image 2) */}
-                      <div className="text-[9.5px] text-cyan-300 font-semibold flex items-center gap-1">
-                        <Navigation size={10} className="text-emerald-400 shrink-0" />
-                        <span className="truncate">100% Highway Passable • {curvedState.currentHighwayName || 'NH Arterial'}</span>
+                  {/* 2. Destination District Target Pin */}
+                  {targetPx && (
+                    <div
+                      className="absolute pointer-events-auto select-none"
+                      style={{
+                        left: `${targetPx[0]}px`,
+                        top: `${targetPx[1]}px`,
+                        transform: 'translate(-50%, -100%)',
+                        zIndex: 26,
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#300707] border-2 border-red-500 shadow-[0_6px_20px_rgba(0,0,0,0.9)] text-[9.5px] font-black text-red-100 whitespace-nowrap mb-1 animate-pulse">
+                        <MapPin size={11} className="text-red-300 shrink-0" />
+                        <span className="truncate max-w-[120px]">{mission.targetDistrict || 'Target'}</span>
                       </div>
+                    </div>
+                  )}
 
-                      {/* Bottom Row: Progress bar & status (like 9% path in Image 2) */}
-                      <div className="flex items-center gap-2 pt-0.5">
-                        <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-300"
-                            style={{ width: `${p}%` }}
-                          />
+                  {/* 3. Active Tactical Unit Vehicle Pod & Solid Floating Route Navigation HUD Card */}
+                  {unitPx && (
+                    <div
+                      className="absolute pointer-events-auto select-none flex flex-col items-center"
+                      style={{
+                        left: `${unitPx[0]}px`,
+                        top: `${unitPx[1]}px`,
+                        transform: 'translate(-50%, -50%)',
+                        zIndex: 32,
+                      }}
+                    >
+                      {/* Floating Navigation HUD Tooltip Card (100% Solid Dark Navy, NO Map Bleed-Through) */}
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsLeftPanelOpen(true);
+                          setActiveLeftTab('dispatches');
+                        }}
+                        className="absolute bottom-full mb-3.5 left-1/2 -translate-x-1/2 min-w-[230px] max-w-[290px] bg-[#060e1b] border-2 border-cyan-400 p-2.5 rounded-2xl shadow-[0_16px_48px_rgba(0,0,0,0.98)] flex flex-col gap-1.5 text-left cursor-pointer hover:border-cyan-300 transition-all after:content-[''] after:absolute after:top-full after:left-1/2 after:-translate-x-1/2 after:border-8 after:border-transparent after:border-t-[#060e1b]"
+                      >
+                        {/* Top Row: Distance & ETA + Priority Badge */}
+                        <div className="flex items-center justify-between text-[11.5px] font-black text-white">
+                          <span className="tracking-tight text-white flex items-center gap-1.5">
+                            <Truck size={13} className="text-cyan-400" />
+                            <span>
+                              {mission.roadDistanceKm || 60} km • {mission.etaMinutes || 35}m ETA
+                            </span>
+                          </span>
+                          <span
+                            className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                              mission.priority === 'CRITICAL'
+                                ? 'bg-red-600 text-white shadow-xs'
+                                : 'bg-emerald-600 text-white shadow-xs'
+                            }`}
+                          >
+                            {mission.priority}
+                          </span>
                         </div>
-                        <span className="text-[9px] font-mono font-bold text-slate-200">
-                          {isArrived ? 'ARRIVED' : `${p}%`}
-                        </span>
+
+                        {/* Payload Units Info (100% Solid Opaque Background) */}
+                        <div className="text-[10px] text-cyan-100 font-extrabold bg-[#0d2139] border border-cyan-400/80 px-2 py-1.5 rounded-lg flex items-center gap-2 shadow-sm">
+                          <Unit3DIcon
+                            unitType={mission.primaryUnitType || 'ambulance'}
+                            size={20}
+                            animated={false}
+                          />
+                          <span className="truncate">
+                            {mission.items && mission.items.length > 0
+                              ? mission.items.map((it) => `${it.quantity}x ${it.shortName || it.name}`).join(' • ')
+                              : `${mission.quantity || 1}x ${mission.unitLabel || mission.resourceType}`}
+                          </span>
+                        </div>
+
+                        {/* Middle Row: Passability & Highway Name */}
+                        <div className="text-[9.5px] text-emerald-300 font-bold flex items-center gap-1">
+                          <Navigation size={10} className="text-emerald-400 shrink-0" />
+                          <span className="truncate">
+                            100% Highway Passable • {curvedState.currentHighwayName || 'NH Arterial'}
+                          </span>
+                        </div>
+
+                        {/* Bottom Row: Progress bar & percentage badge */}
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <div className="flex-1 h-2.5 bg-[#0b1524] rounded-full overflow-hidden border border-slate-700">
+                            <div
+                              className="h-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 rounded-full transition-all duration-300 shadow-[0_0_10px_rgba(56,189,248,0.9)]"
+                              style={{ width: `${p}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono font-black text-cyan-300 bg-[#030812] border border-cyan-500/40 px-1.5 py-0.2 rounded">
+                            {p}%
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Glowing Circular Location Puck (Matching Image 2!) */}
-                    <div className="relative flex items-center justify-center">
-                      {/* Pulsing Radar Ring */}
-                      {!isArrived && (
-                        <span className="animate-ping absolute inline-flex h-8 w-8 rounded-full bg-cyan-400 opacity-50" />
-                      )}
+                      {/* Primary Tactical Vehicle Unit Marker (100% Solid Pod + 3D Vehicle + Heading Arrow) */}
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsLeftPanelOpen(true);
+                          setActiveLeftTab('dispatches');
+                        }}
+                        className="group relative flex flex-col items-center cursor-pointer"
+                      >
+                        {/* Outer Pulsing Radar Ring */}
+                        <span className="animate-ping absolute -top-1 inline-flex h-14 w-14 rounded-full bg-cyan-400/50 pointer-events-none" />
 
-                      {/* Blue Disc with White Border */}
-                      <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-600 to-cyan-500 border-2 border-white shadow-[0_0_15px_rgba(56,189,248,0.9)] flex items-center justify-center relative">
-                        {/* Pure White Solid Center Dot */}
-                        <div className="w-2 h-2 rounded-full bg-white shadow-xs" />
+                        {/* Vivid Solid Unit Pod Circle */}
+                        <div className="w-12 h-12 rounded-full bg-[#08172c] border-2 border-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.95)] flex items-center justify-center relative transition-transform group-hover:scale-115">
+                          {/* Render 3D Animated Vehicle Graphic */}
+                          <div className="scale-95 flex items-center justify-center">
+                            <Unit3DIcon
+                              unitType={mission.primaryUnitType || 'ambulance'}
+                              size={30}
+                              isMoving={true}
+                            />
+                          </div>
 
-                        {/* Forward Travel Direction Compass Needle */}
-                        {!isArrived && (
+                          {/* Direction Heading Compass Pointer */}
                           <div
-                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-blue-700 border border-cyan-300 flex items-center justify-center shadow-xs transition-transform duration-300"
+                            className="absolute -top-1 -right-1 w-4.5 h-4.5 rounded-full bg-blue-600 border-2 border-white flex items-center justify-center shadow-md transition-transform duration-300"
                             style={{ transform: `rotate(${heading}deg)` }}
                             title={`Heading: ${heading}°`}
                           >
-                            <Navigation size={7} className="text-white fill-white" />
+                            <Navigation size={9} className="text-white fill-white" />
                           </div>
-                        )}
+                        </div>
+
+                        {/* Tactical Unit Mini Label Chip (100% Solid Dark Badge) */}
+                        <div className="mt-1.5 px-2 py-0.5 rounded-md bg-[#040a14] border-2 border-cyan-400/90 shadow-[0_4px_14px_rgba(0,0,0,0.95)] text-[9.5px] font-black text-white tracking-tight flex items-center gap-1.5 whitespace-nowrap">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                          <span className="truncate max-w-[120px]">
+                            {mission.items && mission.items[0]
+                              ? `${mission.items[0].quantity}x ${mission.items[0].shortName || mission.items[0].name}`
+                              : mission.unitLabel || 'Relief Unit'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Marker>
-              </React.Fragment>
-            );
-          })}
+                  )}
+                </React.Fragment>
+              );
+            })}
 
           {/* Preview Route Destination & Origin Markers when planning a dispatch */}
-          {(showNewDispatchModal || (selectedWarehouse && selectedDistrictProps)) && estimatedRouteInfo?.targetCoords && activeOriginWarehouse && (
-            <>
-              <Marker
-                longitude={activeOriginWarehouse.coordinates[0]}
-                latitude={activeOriginWarehouse.coordinates[1]}
-                anchor="bottom"
-              >
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#064e3b]/95 border border-emerald-400/60 shadow-lg text-[9px] font-bold text-emerald-200 pointer-events-auto backdrop-blur-md">
-                  <Building2 size={10} className="text-emerald-400 shrink-0" />
-                  <span className="truncate max-w-[95px]">{activeOriginWarehouse.facilityName}</span>
-                </div>
-              </Marker>
+          {(showNewDispatchModal || (selectedWarehouse && selectedDistrictProps)) &&
+            estimatedRouteInfo?.targetCoords &&
+            activeOriginWarehouse && (
+              <>
+                {(() => {
+                  const pOrigin = projectLngLat(activeOriginWarehouse.coordinates);
+                  const pTarget = projectLngLat(estimatedRouteInfo.targetCoords);
 
-              <Marker
-                longitude={estimatedRouteInfo.targetCoords[0]}
-                latitude={estimatedRouteInfo.targetCoords[1]}
-                anchor="bottom"
-              >
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-950/95 border border-red-500/60 shadow-lg text-[9px] font-bold text-red-200 pointer-events-auto backdrop-blur-md animate-pulse">
-                  <MapPin size={10} className="text-red-400 shrink-0" />
-                  <span className="truncate max-w-[95px]">{newTargetDistrict || selectedDistrictProps?.NAME_2 || selectedDistrictProps?.name || 'Target'}</span>
-                </div>
-              </Marker>
-            </>
-          )}
-        </MapGL>
-      </DeckGL>
+                  return (
+                    <>
+                      {pOrigin && (
+                        <div
+                          className="absolute pointer-events-auto select-none"
+                          style={{
+                            left: `${pOrigin[0]}px`,
+                            top: `${pOrigin[1]}px`,
+                            transform: 'translate(-50%, -100%)',
+                            zIndex: 26,
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#042417] border-2 border-emerald-400 shadow-[0_6px_20px_rgba(0,0,0,0.9)] text-[9.5px] font-black text-emerald-100 whitespace-nowrap mb-1">
+                            <Building2 size={11} className="text-emerald-300 shrink-0" />
+                            <span className="truncate max-w-[120px]">{activeOriginWarehouse.facilityName}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {pTarget && (
+                        <div
+                          className="absolute pointer-events-auto select-none"
+                          style={{
+                            left: `${pTarget[0]}px`,
+                            top: `${pTarget[1]}px`,
+                            transform: 'translate(-50%, -100%)',
+                            zIndex: 26,
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#300707] border-2 border-red-500 shadow-[0_6px_20px_rgba(0,0,0,0.9)] text-[9.5px] font-black text-red-100 whitespace-nowrap mb-1 animate-pulse">
+                            <MapPin size={11} className="text-red-300 shrink-0" />
+                            <span className="truncate max-w-[120px]">
+                              {newTargetDistrict ||
+                                selectedDistrictProps?.NAME_2 ||
+                                selectedDistrictProps?.name ||
+                                'Target'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
+            )}
+        </div>
+      )}
 
       {/* Real-time Arrival Alert Banner Toast */}
       <AnimatePresence>
@@ -2182,6 +2350,29 @@ export const DispatchMap: React.FC = () => {
             {/* TAB 2: Live Convoy Dispatches */}
             {activeLeftTab === 'dispatches' && (
               <div className="space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800 max-h-[420px]">
+                {/* Clear Completed Missions Quick Action Header */}
+                {stateDispatches.some((d) => d.status === 'Arrived & Active' || (d.progress || 0) >= 100) && (
+                  <div className="p-2 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+                    <span className="text-[10px] text-emerald-300 font-semibold flex items-center gap-1.5">
+                      <CheckCircle size={12} className="text-emerald-400" />
+                      <span>
+                        {stateDispatches.filter((d) => d.status === 'Arrived & Active' || (d.progress || 0) >= 100).length} Delivered Convoy(s)
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stateDispatches
+                          .filter((d) => d.status === 'Arrived & Active' || (d.progress || 0) >= 100)
+                          .forEach((d) => removeDispatchMission(d.id));
+                      }}
+                      className="px-2 py-0.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-400/40 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 size={10} />
+                      <span>Clear All Delivered</span>
+                    </button>
+                  </div>
+                )}
                 {stateDispatches.length === 0 ? (
                   <div className="p-5 text-center bg-gradient-to-b from-[#091124] to-[#060a16] rounded-2xl border border-[#1b2d4c] space-y-3.5 shadow-lg">
                     <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-[#FF671F]/20 via-[#1e3a8a]/20 to-[#046A38]/20 border border-[#274372] flex items-center justify-center text-blue-400 shadow-[0_0_15px_rgba(30,58,138,0.3)]">
@@ -2399,14 +2590,25 @@ export const DispatchMap: React.FC = () => {
 
                         {/* Reached Information Action / Live En Route */}
                         {isArrived ? (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedArrivedMission(disp)}
-                            className="w-full py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                          >
-                            <FileCheck size={13} className="text-emerald-400" />
-                            <span>View Reached Information & Handover</span>
-                          </button>
+                          <div className="flex items-center gap-1.5 pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedArrivedMission(disp)}
+                              className="flex-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                            >
+                              <FileCheck size={13} className="text-emerald-400" />
+                              <span>View Handover Info</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeDispatchMission(disp.id)}
+                              className="py-1.5 px-2 bg-slate-800/80 hover:bg-red-950/60 text-slate-400 hover:text-red-300 border border-slate-700/60 hover:border-red-500/40 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                              title="Dismiss / Clear Mission"
+                            >
+                              <Trash2 size={11} />
+                              <span>Clear</span>
+                            </button>
+                          </div>
                         ) : (
                           <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                             <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
@@ -3155,6 +3357,10 @@ export const DispatchMap: React.FC = () => {
         mission={selectedArrivedMission}
         isOpen={Boolean(selectedArrivedMission)}
         onClose={() => setSelectedArrivedMission(null)}
+        onDismissMission={(missionId) => {
+          removeDispatchMission(missionId);
+          setSelectedArrivedMission(null);
+        }}
         onOrderReinforcements={(district) => {
           setSelectedArrivedMission(null);
           setNewTargetDistrict(district);

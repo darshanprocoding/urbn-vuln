@@ -22,6 +22,7 @@ interface ReachedInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOrderReinforcements?: (district: string) => void;
+  onDismissMission?: (missionId: string) => void;
 }
 
 export const ReachedInfoModal: React.FC<ReachedInfoModalProps> = ({
@@ -29,23 +30,35 @@ export const ReachedInfoModal: React.FC<ReachedInfoModalProps> = ({
   isOpen,
   onClose,
   onOrderReinforcements,
+  onDismissMission,
 }) => {
   if (!isOpen || !mission) return null;
 
-  const report = mission.arrivalReport || {
-    commanderName: 'Commandant R. K. Verma (NDRF / SDRF Joint Field Cmd)',
-    contactLead: 'DEOC Tactical Ops Desk',
-    deocContact: 'Emergency Hotline: 1077 / SAT-COM 892-019',
-    onGroundStatus: 'Assets Deployed & Fully Operational at Impact Sector',
-    deliveredSummary: `${mission.quantity} ${mission.unitLabel} handed over to district authorities`,
-    immediateDeploymentZone: `${mission.targetDistrict} Sector 3 & Central Relief Staging Ground`,
-    survivorsAssisted: Math.floor(Math.random() * 800) + 450,
-    triageOperational: true,
-    fieldNotes: [
-      'Convoy arrival confirmed by District Disaster Management Officer (DDMO).',
-      'Field staging perimeter established with local police liaison.',
-      'Emergency fuel and cold-chain backup generators initialized without delay.',
-    ],
+  const rawReport = mission.arrivalReport || {};
+  const commanderName = rawReport.commanderName || rawReport.incidentCommander || 'Commandant R. K. Verma (NDRF / SDRF Joint Field Cmd)';
+  const deocContact = rawReport.deocContact || rawReport.contactRadio || 'Emergency Hotline: 1077 / SAT-COM 892-019';
+  const onGroundStatus = rawReport.onGroundStatus || rawReport.statusMessage || 'Assets Deployed & Fully Operational at Impact Sector';
+  const immediateDeploymentZone = rawReport.immediateDeploymentZone || rawReport.immediateZone || `${mission.targetDistrict || 'Target Sector'} Central Relief Staging Ground`;
+  const survivorsAssisted = typeof rawReport.survivorsAssisted === 'number' ? rawReport.survivorsAssisted : (Math.floor(Math.random() * 800) + 450);
+  const rawNotes = rawReport.fieldNotes || rawReport.fieldChecklist;
+  const fieldNotes = Array.isArray(rawNotes) && rawNotes.length > 0
+    ? rawNotes
+    : [
+        'Convoy arrival confirmed by District Disaster Management Officer (DDMO).',
+        'Field staging perimeter established with local police liaison.',
+        'Emergency fuel and cold-chain backup generators initialized without delay.',
+      ];
+
+  const report = {
+    commanderName,
+    contactLead: rawReport.contactLead || 'DEOC Tactical Ops Desk',
+    deocContact,
+    onGroundStatus,
+    deliveredSummary: rawReport.deliveredSummary || `${mission.quantity || 1} ${mission.unitLabel || 'Units'} handed over to district authorities`,
+    immediateDeploymentZone,
+    survivorsAssisted,
+    triageOperational: rawReport.triageOperational ?? true,
+    fieldNotes,
   };
 
   const downloadReport = () => {
@@ -297,7 +310,23 @@ export const ReachedInfoModal: React.FC<ReachedInfoModalProps> = ({
                 </button>
               )}
 
+              {onDismissMission && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDismissMission(mission.id);
+                    onClose();
+                  }}
+                  className="px-4 py-2 bg-emerald-700/30 hover:bg-emerald-700/50 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Clear this completed mission and remove units from tracking"
+                >
+                  <CheckCircle2 size={13} className="text-emerald-400" />
+                  <span>Complete & Clear Mission</span>
+                </button>
+              )}
+
               <button
+                type="button"
                 onClick={onClose}
                 className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-500/25 cursor-pointer"
               >
