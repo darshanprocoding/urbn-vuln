@@ -1,19 +1,47 @@
 import React, { useState, Suspense } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { DisasterSimulationProvider, useDisasterSimulation } from './context/DisasterSimulationContext';
+import { DisasterSimulationProvider } from './context/DisasterSimulationContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './components/LoginPage';
 import { LanguageSelector } from './components/LanguageSelector';
-import { Shield, Radio, Activity, LogOut, UserCheck } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { LogOut, Loader2 } from 'lucide-react';
 
-// Lazy load heavy components and modals to reduce initial chunk size
-const VulnerabilityMap = React.lazy(() => import('./components/VulnerabilityMap').then(m => ({ default: m.VulnerabilityMap })));
-const DispatchMap = React.lazy(() => import('./components/DispatchMap').then(m => ({ default: m.DispatchMap })));
-const PrioritizationDashboard = React.lazy(() => import('./components/PrioritizationDashboard').then(m => ({ default: m.PrioritizationDashboard })));
-const InfrastructureStatus = React.lazy(() => import('./components/InfrastructureStatus').then(m => ({ default: m.InfrastructureStatus })));
-const ResourceManagement = React.lazy(() => import('./components/ResourceManagement').then(m => ({ default: m.ResourceManagement })));
-const ExportReportModal = React.lazy(() => import('./components/ExportReportModal').then(m => ({ default: m.ExportReportModal })));
+import { lazyWithRetry } from './utils/lazyImport';
+
+// Dynamic code-splitting of heavy tactical views
+const VulnerabilityMap = lazyWithRetry(() =>
+  import('./components/VulnerabilityMap').then((m) => ({ default: m.VulnerabilityMap }))
+);
+const DispatchMap = lazyWithRetry(() =>
+  import('./components/DispatchMap').then((m) => ({ default: m.DispatchMap }))
+);
+const PrioritizationDashboard = lazyWithRetry(() =>
+  import('./components/PrioritizationDashboard').then((m) => ({ default: m.PrioritizationDashboard }))
+);
+const InfrastructureStatus = lazyWithRetry(() =>
+  import('./components/InfrastructureStatus').then((m) => ({ default: m.InfrastructureStatus }))
+);
+const ResourceManagement = lazyWithRetry(() =>
+  import('./components/ResourceManagement').then((m) => ({ default: m.ResourceManagement }))
+);
+const ExportReportModal = lazyWithRetry(() =>
+  import('./components/ExportReportModal').then((m) => ({ default: m.ExportReportModal }))
+);
+
+function ViewLoadingFallback({ title }: { title: string }) {
+  return (
+    <div className="h-[calc(100vh-8rem)] w-full flex flex-col items-center justify-center bg-[#070c18]/80 border border-[#142036] rounded-2xl backdrop-blur-md">
+      <div className="relative flex items-center justify-center mb-4">
+        <div className="w-12 h-12 rounded-full border-2 border-blue-500/20 border-t-blue-500 animate-spin" />
+        <Loader2 className="w-5 h-5 text-blue-400 absolute animate-pulse" />
+      </div>
+      <p className="text-sm font-bold text-slate-200 tracking-wide font-mono">INITIALIZING {title.toUpperCase()}...</p>
+      <p className="text-xs text-slate-500 mt-1 font-mono">Loading telemetry stream & geospatial grid layers</p>
+    </div>
+  );
+}
 
 function AppContent() {
   const { isAuthenticated, currentUser, logout } = useAuth();
@@ -64,9 +92,6 @@ function AppContent() {
           </div>
 
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            {/* Multilingual Top Selector */}
-            <LanguageSelector variant="header" />
-
             {/* Authenticated Judge Profile Badge */}
             <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-gradient-to-r from-[#11203a] to-[#0d1729] border border-blue-500/30 text-xs shadow-sm">
               <div className="w-6 h-6 rounded-lg bg-[#FF671F]/20 border border-[#FF671F]/40 flex items-center justify-center text-[10px] font-black text-amber-300">
@@ -80,13 +105,6 @@ function AppContent() {
                   {currentUser?.badge || 'JUDGE ACCESS'}
                 </p>
               </div>
-              <button
-                onClick={logout}
-                className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all ml-1 cursor-pointer"
-                title="Log Out Terminal"
-              >
-                <LogOut size={13} />
-              </button>
             </div>
 
             <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#101c33] to-[#0d1627] border border-[#1e3357] shadow-sm">
@@ -103,18 +121,24 @@ function AppContent() {
 
         <main className="flex-1 overflow-y-auto p-3 sm:p-5 scrollbar-thin scrollbar-thumb-slate-800">
           <div className="max-w-[1700px] mx-auto">
-            <Suspense fallback={<div className="p-8 text-center bg-[#0b101d] border border-[#172338] rounded-2xl flex items-center justify-center text-slate-400 text-sm">Loading module...</div>}>
-              <div className={currentView === 'Vulnerability Map' ? 'h-[calc(100vh-6rem)] relative' : 'hidden'}>
-                <VulnerabilityMap />
-              </div>
-              <div className={currentView === 'Dispatch Map' ? 'h-[calc(100vh-6rem)] relative' : 'hidden'}>
-                <DispatchMap />
-              </div>
-              {currentView === 'Resource Management' && <ResourceManagement />}
-              {currentView === 'Prioritization Dashboard' && <PrioritizationDashboard />}
-              {currentView === 'Infrastructure Status' && <InfrastructureStatus />}
-              {currentView === 'Incident Dispatch' && <ResourceManagement />}
-            </Suspense>
+            <ErrorBoundary fallbackTitle="Tactical Module Recovery">
+              <Suspense fallback={<ViewLoadingFallback title={getViewTitle()} />}>
+                {currentView === 'Vulnerability Map' && (
+                  <div className="h-[calc(100vh-6rem)] relative">
+                    <VulnerabilityMap />
+                  </div>
+                )}
+                {currentView === 'Dispatch Map' && (
+                  <div className="h-[calc(100vh-6rem)] relative">
+                    <DispatchMap />
+                  </div>
+                )}
+                {currentView === 'Resource Management' && <ResourceManagement />}
+                {currentView === 'Prioritization Dashboard' && <PrioritizationDashboard />}
+                {currentView === 'Infrastructure Status' && <InfrastructureStatus />}
+                {currentView === 'Incident Dispatch' && <ResourceManagement />}
+              </Suspense>
+            </ErrorBoundary>
             {!['Vulnerability Map', 'Dispatch Map', 'Resource Management', 'Prioritization Dashboard', 'Infrastructure Status', 'Incident Dispatch'].includes(currentView) && (
               <div className="p-8 text-center bg-[#0b101d] border border-[#172338] rounded-2xl">
                 <h3 className="text-base font-bold text-slate-200">{currentView}</h3>
@@ -144,3 +168,4 @@ export default function App() {
     </AuthProvider>
   );
 }
+

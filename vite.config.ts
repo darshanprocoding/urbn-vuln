@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig(() => {
   return {
@@ -16,41 +16,56 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
     optimizeDeps: {
-      include: ['maplibre-gl'],
+      include: ['maplibre-gl', '@deck.gl/react', '@deck.gl/layers', 'deck.gl'],
     },
     build: {
-      chunkSizeWarningLimit: 1000,
+      chunkSizeWarningLimit: 1200,
+      target: 'esnext',
+      minify: 'esbuild' as const,
+      cssCodeSplit: true,
       rollupOptions: {
+        treeshake: {
+          moduleSideEffects: true,
+          propertyReadSideEffects: false,
+        },
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('canvg') || id.includes('fflate') || id.includes('purify')) {
-                return 'vendor-pdf';
-              }
-              if (id.includes('maplibre-gl')) {
-                return 'vendor-maplibre';
-              }
+              // React core & styling/animation
               if (
-                id.includes('@deck.gl') ||
+                id.includes('node_modules/react/') ||
+                id.includes('node_modules/react-dom/') ||
+                id.includes('node_modules/motion/') ||
+                id.includes('node_modules/lucide-react/')
+              ) {
+                return 'vendor-core';
+              }
+              // Map rendering & WebGL layers
+              if (
+                id.includes('maplibre-gl') ||
+                id.includes('react-map-gl') ||
                 id.includes('deck.gl') ||
+                id.includes('@deck.gl') ||
                 id.includes('luma.gl') ||
                 id.includes('@math.gl') ||
                 id.includes('@loaders.gl') ||
                 id.includes('@probe.gl')
               ) {
-                return 'vendor-deckgl';
+                return 'vendor-geo';
               }
-              if (id.includes('recharts') || id.includes('d3-')) {
+              // Charts & data visualization
+              if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) {
                 return 'vendor-charts';
               }
-              if (id.includes('motion')) {
-                return 'vendor-motion';
-              }
-              if (id.includes('lucide-react')) {
-                return 'vendor-icons';
-              }
-              if (id.includes('react') || id.includes('scheduler')) {
-                return 'vendor-react';
+              // PDF export & Canvas rasterization
+              if (
+                id.includes('jspdf') ||
+                id.includes('html2canvas') ||
+                id.includes('html2canvas-pro') ||
+                id.includes('purify') ||
+                id.includes('canvg')
+              ) {
+                return 'vendor-pdf';
               }
             }
           },
@@ -59,3 +74,4 @@ export default defineConfig(() => {
     },
   };
 });
+

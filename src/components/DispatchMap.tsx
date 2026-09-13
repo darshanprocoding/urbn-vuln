@@ -83,6 +83,7 @@ import {
   DistrictVulnerabilityProfile,
 } from '../data/districtProfiles';
 import { useDisasterSimulation } from '../context/DisasterSimulationContext';
+import { getIndianDistrictsGeoData } from '../utils/geoDataManager';
 import {
   DISPATCH_UNIT_TYPES,
   DispatchPayloadItem,
@@ -118,15 +119,6 @@ function getVulnerabilityColor(score: number): [number, number, number] {
 }
 
 export const DispatchMap: React.FC = () => {
-  // State Selection & Dropdown State
-  const [selectedStateId, setSelectedStateId] = useState<string>('bihar');
-  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const [isDisasterDropdownOpen, setIsDisasterDropdownOpen] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('All');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const disasterDropdownRef = useRef<HTMLDivElement>(null);
-
   // Shared Disaster Simulation Context (synced across Vulnerability Map & Dispatch Map)
   const {
     disasterType,
@@ -150,6 +142,29 @@ export const DispatchMap: React.FC = () => {
     removeDispatchMission,
   } = useDisasterSimulation();
 
+  // State Selection & Dropdown State
+  const [selectedStateId, setSelectedStateId] = useState<string>(() => {
+    if (epicenter && epicenter.length === 2) {
+      let nearestId = 'bihar';
+      let minDistance = Infinity;
+      Object.entries(STATE_GEO_CONFIGS).forEach(([id, config]) => {
+        const dist = haversineDistanceKm(epicenter, config.center as [number, number]);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestId = id;
+        }
+      });
+      return nearestId;
+    }
+    return 'bihar';
+  });
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const [isDisasterDropdownOpen, setIsDisasterDropdownOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('All');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const disasterDropdownRef = useRef<HTMLDivElement>(null);
+
   // GeoJSON dataset
   const [geoData, setGeoData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -167,12 +182,27 @@ export const DispatchMap: React.FC = () => {
   // View State for DeckGL with smooth fly-to transition
   const [is3DMode, setIs3DMode] = useState<boolean>(true);
   const [viewState, setViewState] = useState({
-    longitude: stateGeoConfig.center[0],
-    latitude: stateGeoConfig.center[1],
-    zoom: stateGeoConfig.zoom,
+    longitude: epicenter && epicenter.length === 2 ? epicenter[0] : stateGeoConfig.center[0],
+    latitude: epicenter && epicenter.length === 2 ? epicenter[1] : stateGeoConfig.center[1],
+    zoom: epicenter && epicenter.length === 2 ? 6.8 : stateGeoConfig.zoom,
     pitch: is3DMode ? 28 : 0,
     bearing: 0,
   });
+
+  // Automatically fly to new epicenter if it changes
+  useEffect(() => {
+    if (epicenter && epicenter.length === 2) {
+      setViewState((prev) => ({
+        ...prev,
+        longitude: epicenter[0],
+        latitude: epicenter[1],
+        zoom: 6.8,
+        // @ts-ignore
+        transitionDuration: 1000,
+        transitionInterpolator: new FlyToInterpolator(),
+      }));
+    }
+  }, [epicenter]);
 
   // Map Container Reference & Sizing for Pixel Projection Overlay (Solid HUD & Vehicles)
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -390,68 +420,17 @@ export const DispatchMap: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Load GeoJSON dataset
+  // Load GeoJSON dataset via shared resilient cache manager
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
-    fetch(`${import.meta.env.BASE_URL}india-districts.json`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        const enrichedFeatures = (data.features || []).map((feature: any, index: number) => {
-          const rawState = feature.properties?.NAME_1 || 'India';
-          const stateName = canonicalStateName(rawState);
-          const districtName = feature.properties?.NAME_2 || `District ${index + 1}`;
-          const centroid = computeFeatureCentroid(feature.geometry);
-          const baseline = getDistrictBaseline(districtName, stateName);
-          const distId = `dist-${index}`;
-
-          // Precompute vulnerability profile for fast lookup
-          const vProfile = calculateDistrictVulnerabilityProfile(stateName, districtName, centroid);
-
-          return {
-            ...feature,
-            properties: {
-              ...feature.properties,
-              id: distId,
-              name: districtName,
-              state: stateName,
-              centroid,
-              coordinates: centroid,
-              population: baseline.population,
-              areaKm2: baseline.areaKm2,
-              populationDensity: baseline.populationDensity,
-              povertyIndex: baseline.povertyIndex,
-              dependencyRatio: baseline.dependencyRatio,
-              buildingVulnerability: baseline.buildingVulnerability,
-              historicalDamageScore: baseline.historicalDamageScore,
-              lifelineProximityScore: baseline.lifelineProximityScore,
-              ewsCoverage: baseline.ewsCoverage,
-              primaryRiskFactor: baseline.primaryRiskFactor,
-              floodBase: baseline.floodBase,
-              heatwaveBase: baseline.heatwaveBase,
-              cycloneBase: baseline.cycloneBase,
-              vulnerabilityScore: vProfile.vulnerabilityScore,
-              riskTier: vProfile.riskTier,
-              exposureScore: vProfile.exposureScore,
-              sensitivityScore: vProfile.sensitivityScore,
-              adaptiveCapacityScore: vProfile.adaptiveCapacityScore,
-              lackOfCapacityScore: vProfile.lackOfCapacityScore,
-            },
-          };
-        });
-
-        setGeoData({
-          type: 'FeatureCollection',
-          features: enrichedFeatures,
-        });
+    getIndianDistrictsGeoData()
+      .then((dataset) => {
+        setGeoData(dataset.geoData);
         setLoading(false);
       })
       .catch((err) => {
-        console.error('Failed to load district maps', err);
-        setLoadError(err.message || 'Failed to load geospatial data');
+        console.warn('Geospatial loader warning:', err);
         setLoading(false);
       });
   }, []);

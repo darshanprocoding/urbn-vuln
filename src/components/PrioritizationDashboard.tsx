@@ -30,7 +30,6 @@ import {
   HeartPulse,
   Radio,
   SlidersHorizontal,
-  ChevronDown,
   X,
   Droplets,
   Flame,
@@ -63,8 +62,6 @@ import {
   ZoneScoreCalculation,
 } from '../utils/vulnerabilityMath';
 
-const REGIONS = ['⚡ Affected', 'All', 'North', 'East', 'West', 'South', 'North-East', 'Central'];
-
 export const PrioritizationDashboard: React.FC = () => {
   const {
     disasterType,
@@ -89,25 +86,6 @@ export const PrioritizationDashboard: React.FC = () => {
 
   // Geographic Scope Selection ('ALL' for Nationwide all zones, or state.id)
   const [selectedScope, setSelectedScope] = useState<string>('ALL'); // 'ALL' or stateId like 'bihar'
-  const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('⚡ Affected');
-  const [isScopeDropdownOpen, setIsScopeDropdownOpen] = useState<boolean>(false);
-  const [stateSearchQuery, setStateSearchQuery] = useState<string>('');
-  const scopeDropdownRef = useRef<HTMLDivElement>(null);
-
-  // Click outside to close scope dropdown
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(event.target as Node)) {
-        setIsScopeDropdownOpen(false);
-      }
-    }
-    if (isScopeDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isScopeDropdownOpen]);
 
   // Table Filters & Search
   const [tableSearchQuery, setTableSearchQuery] = useState<string>('');
@@ -249,32 +227,6 @@ export const PrioritizationDashboard: React.FC = () => {
       return (mB?.impactedDistricts || 0) - (mA?.impactedDistricts || 0);
     });
   }, [stateMetricsMap]);
-
-  // Filtered state list for dropdown search & region filter
-  const filteredStatesForDropdown = useMemo(() => {
-    return sortedStatesForMenu.filter((st) => {
-      const m = stateMetricsMap.get(st.id);
-      const isImp = m?.isImpacted;
-
-      const matchRegion =
-        selectedRegionFilter === 'All'
-          ? true
-          : selectedRegionFilter === '⚡ Affected'
-          ? isImp
-          : st.region === selectedRegionFilter;
-
-      const q = stateSearchQuery.toLowerCase().trim();
-      const isCountryWideQuery = q === 'india' || q === 'all' || q === 'national' || q === 'nationwide';
-      const matchQuery =
-        !q ||
-        isCountryWideQuery ||
-        st.stateName.toLowerCase().includes(q) ||
-        st.capital.toLowerCase().includes(q) ||
-        st.stateCode.toLowerCase().includes(q);
-
-      return matchRegion && matchQuery;
-    });
-  }, [sortedStatesForMenu, stateMetricsMap, selectedRegionFilter, stateSearchQuery]);
 
   // List of affected states for top quick-access chips
   const affectedStatesList = useMemo(() => {
@@ -639,174 +591,7 @@ export const PrioritizationDashboard: React.FC = () => {
               );
             })}
 
-            {/* Complete State / Scope Dropdown Selector */}
-            <div className="relative">
-              <button
-                onClick={() => setIsScopeDropdownOpen(!isScopeDropdownOpen)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border transition-all cursor-pointer ${
-                  selectedScope !== 'ALL' && !affectedStatesList.slice(0, 4).some((s) => s.id === selectedScope)
-                    ? 'bg-blue-600/30 border-blue-400 text-blue-200'
-                    : 'bg-[#0d1524] hover:bg-[#131e33] text-slate-300 border-[#1e2f4d]'
-                }`}
-              >
-                <span>
-                  {selectedScope === 'ALL'
-                    ? 'Select State...'
-                    : activeScopeProfile
-                    ? activeScopeProfile.stateName
-                    : 'Select State...'}
-                </span>
-                <ChevronDown
-                  size={14}
-                  className={`text-slate-400 transition-transform ${isScopeDropdownOpen ? 'rotate-180 text-blue-400' : ''}`}
-                />
-              </button>
-
-              {/* Dropdown Menu */}
-              {isScopeDropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setIsScopeDropdownOpen(false)}
-                  />
-                  <div className="absolute top-10 left-0 sm:right-0 sm:left-auto w-[320px] sm:w-[360px] max-h-[440px] bg-[#090d16] border border-[#1e2f4d] rounded-2xl shadow-2xl backdrop-blur-2xl z-50 overflow-hidden flex flex-col">
-                    {/* Header & Region Tabs */}
-                    <div className="p-3 border-b border-[#15233c] bg-[#070b14]/90 space-y-2">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-                        <input
-                          type="text"
-                          placeholder="Search state or region..."
-                          value={stateSearchQuery}
-                          onChange={(e) => setStateSearchQuery(e.target.value)}
-                          autoFocus
-                          className="w-full pl-8 pr-3 py-1.5 bg-[#0d1524] border border-[#1b2b46] rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                        />
-                        {stateSearchQuery && (
-                          <button
-                            onClick={() => setStateSearchQuery('')}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-                          >
-                            <X size={12} />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Region Filters (with Affected at the front) */}
-                      <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
-                        {REGIONS.map((reg) => (
-                          <button
-                            key={reg}
-                            onClick={() => setSelectedRegionFilter(reg)}
-                            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold whitespace-nowrap transition-all ${
-                              selectedRegionFilter === reg
-                                ? 'bg-blue-600 text-white shadow-sm'
-                                : 'text-slate-400 hover:text-slate-200 hover:bg-[#111c30]'
-                            }`}
-                          >
-                            {reg}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Scope Items List (Affected States brought to the front) */}
-                    <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-slate-800 max-h-[300px]">
-                      {/* Nationwide Option */}
-                      <button
-                        onClick={() => {
-                          setSelectedScope('ALL');
-                          setIsScopeDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all ${
-                          selectedScope === 'ALL'
-                            ? 'bg-blue-600/20 border border-blue-500/40 text-slate-100'
-                            : 'hover:bg-[#101a2c] text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                            <Layers size={14} />
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-slate-100">All Zones (Nationwide)</p>
-                            <p className="text-[10px] text-slate-400">View all impacted districts across India</p>
-                          </div>
-                        </div>
-                        {selectedScope === 'ALL' && <Check size={14} className="text-blue-400" />}
-                      </button>
-
-                      <div className="h-px bg-[#15233c] my-1" />
-
-                      {filteredStatesForDropdown.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-slate-500">
-                          No states match "{stateSearchQuery}"
-                        </div>
-                      ) : (
-                        filteredStatesForDropdown.map((st) => {
-                          const isSelected = selectedScope === st.id;
-                          const m = stateMetricsMap.get(st.id);
-
-                          return (
-                            <button
-                              key={st.id}
-                              onClick={() => {
-                                setSelectedScope(st.id);
-                                setIsScopeDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all ${
-                                isSelected
-                                  ? 'bg-blue-600/20 border border-blue-500/40 text-slate-100'
-                                  : 'hover:bg-[#101a2c] text-slate-300'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <div
-                                  className={`w-6 h-6 rounded-lg flex items-center justify-center font-mono text-[10px] font-bold shrink-0 ${
-                                    isSelected
-                                      ? 'bg-blue-500 text-white'
-                                      : m?.isImpacted
-                                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                                      : 'bg-[#15233c] text-slate-400'
-                                  }`}
-                                >
-                                  {st.stateCode}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-xs font-bold text-slate-200 truncate">
-                                      {st.stateName}
-                                    </span>
-                                    {m?.isImpacted && (
-                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/20 text-red-400 font-bold">
-                                        {m.impactedDistricts} impacted
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-[10px] text-slate-400 truncate">
-                                    HQ: {st.capital} • {st.region}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="text-right shrink-0">
-                                {m?.isImpacted ? (
-                                  <span className="text-[10px] font-mono font-bold text-red-400">
-                                    Peak {m.maxScore}
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] text-slate-500 font-mono">Stable</span>
-                                )}
-                              </div>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Complete State / Scope Dropdown Selector Removed per user request */}
           </div>
         </div>
       </div>
