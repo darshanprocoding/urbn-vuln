@@ -1,0 +1,8 @@
+{
+  "name": "Urban Vuln",
+  "description": "Urban Vulnerability Engine, Strategic Multi-Resource Disaster Dispatch Management, and Real-Time Mission Telemetry System",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
